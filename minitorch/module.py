@@ -31,13 +31,17 @@ class Module:
 
     def train(self) -> None:
         "Set the mode of this module and all descendent modules to `train`."
-        # TODO: Implement for Task 0.4.
-        raise NotImplementedError('Need to implement for Task 0.4')
+        self.training = True
+
+        for module in self.modules():
+            module.train()
 
     def eval(self) -> None:
         "Set the mode of this module and all descendent modules to `eval`."
-        # TODO: Implement for Task 0.4.
-        raise NotImplementedError('Need to implement for Task 0.4')
+        self.training = False
+
+        for module in self.modules():
+            module.eval()
 
     def named_parameters(self) -> Sequence[Tuple[str, Parameter]]:
         """
@@ -47,13 +51,27 @@ class Module:
         Returns:
             The name and `Parameter` of each ancestor parameter.
         """
-        # TODO: Implement for Task 0.4.
-        raise NotImplementedError('Need to implement for Task 0.4')
+        all_parameters = []
+
+        for parameter_name in self._parameters:
+            parameter = self._parameters[parameter_name]
+
+            all_parameters.append((parameter_name, parameter))
+
+        for child_name, child_module in self._modules.items(): # например "layer1", объект Linear
+            child_parameters = child_module.named_parameters()
+
+            for parameter_name, parameter in child_parameters: # например weight/bias
+                full_parameter_name = child_name + "." + parameter_name
+                named_parameter = (full_parameter_name, parameter)
+                all_parameters.append(named_parameter)
+
+        return all_parameters
 
     def parameters(self) -> Sequence[Parameter]:
         "Enumerate over all the parameters of this module and its descendents."
-        # TODO: Implement for Task 0.4.
-        raise NotImplementedError('Need to implement for Task 0.4')
+        return [parameter for _, parameter in self.named_parameters()]
+
 
     def add_parameter(self, k: str, v: Any) -> Parameter:
         """

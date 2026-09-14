@@ -151,6 +151,14 @@ def tensor_map(
         Tensor map function.
     """
 
+    # [
+    #     [10, 20, 30],
+    #     [40, 50, 60]
+    # ]
+    # in_storage = [10, 20, 30, 40, 50, 60]
+    # in_shape = [2, 3]
+    # in_strides = [3, 1]
+
     def _map(
         out: Storage,
         out_shape: Shape,
@@ -159,8 +167,48 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError('Need to implement for Task 3.1')
+        same_shape = np.array_equal(out_shape, in_shape)
+        same_strides = np.array_equal(out_strides, in_strides)
+
+        # если совпадает и shape, и strides
+        # значит элементы входа и результата расположены одинаково
+        if same_shape and same_strides: 
+            for ordinal in prange(len(out)):
+                in_value = in_storage[ordinal]
+                out[ordinal] = fn(in_value)
+        # если формы или strides отличаются
+
+        # f.e. 
+        # input 
+        #         [[10, 20, 30]]
+        #output 
+                # [
+                #     [20, 40, 60],
+                #     [20, 40, 60],
+                # ]
+        else:
+            for i in prange(len(out)):
+                out_index = np.empty(len(out_shape), dtype=np.int32)
+                in_index = np.empty(len(in_shape), dtype=np.int32)
+
+                # без этого возникает ошибка Overwrite of parallel loop index
+                # и прикол в том, что Numba запрещает изменять переменную цикла prange, 
+                # а  с помощью i + 0 создаём отдельное значение
+
+                # и вот + 0 надо делать, 
+                # так как j = i Numba считает просто вторым именем той же защищённой переменной цикла;
+                # j = i + 0 создаёт новое вычисленное значение, 
+                # которое уже можно изменять внутри to_index
+
+                j = i + 0
+
+                to_index(j, out_shape, out_index)
+                broadcast_index(out_index, out_shape, in_shape, in_index)
+                out_position = index_to_position(out_index, out_strides)
+                in_position = index_to_position(in_index, in_strides)
+
+                in_value = in_storage[in_position]
+                out[out_position] = fn(in_value)
 
     return njit(parallel=True)(_map)  # type: ignore
 
@@ -198,8 +246,59 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError('Need to implement for Task 3.1')
+        # a:
+        # [
+        #     [1, 2, 3],
+        #     [4, 5, 6],
+        # ]
+        #
+        # b:
+        # [[10, 20, 30]]
+        #
+        # out:
+        # [
+        #     [11, 22, 33],
+        #     [14, 25, 36],
+        # ]
+
+        # одинаково ли расположены out и a
+        same_a_shape = np.array_equal(out_shape, a_shape)
+        same_a_strides = np.array_equal(out_strides, a_strides)
+
+        # одинаково ли расположены out и b
+        same_b_shape = np.array_equal(out_shape, b_shape)
+        same_b_strides = np.array_equal(out_strides, b_strides)
+
+        # все одинаково ли расположены
+        all_same = (same_a_shape and same_a_strides and same_b_shape and same_b_strides)
+
+        if all_same:
+            for i in prange(len(out)):
+                a_value = a_storage[i]
+                b_value = b_storage[i]
+
+                out[i] = fn(a_value, b_value)
+
+        else:
+            for i in prange(len(out)):
+                out_index = np.empty(len(out_shape), dtype=np.int32)
+                a_index = np.empty(len(a_shape), dtype=np.int32)
+                b_index = np.empty(len(b_shape), dtype=np.int32)
+
+                j = i + 0
+
+                to_index(j, out_shape, out_index)
+                broadcast_index(out_index, out_shape, a_shape, a_index)
+                broadcast_index(out_index, out_shape, b_shape, b_index)
+
+                out_position = index_to_position(out_index, out_strides)
+                a_position = index_to_position(a_index, a_strides)
+                b_position = index_to_position(b_index, b_strides)
+
+                a_value = a_storage[a_position]
+                b_value = b_storage[b_position]
+
+                out[out_position] = fn(a_value, b_value)
 
     return njit(parallel=True)(_zip)  # type: ignore
 
@@ -232,8 +331,55 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError('Need to implement for Task 3.1')
+        #
+        # a:
+        # [
+        #     [1, 2, 3],
+        #     [4, 5, 6],
+        # ]
+        #
+        # reduce_dim = 1
+        #
+        # out:
+        # [
+        #     [6],
+        #     [15],
+        # ]
+
+        for i in prange(len(out)):
+            out_index = np.empty(len(out_shape), dtype=np.int32)
+            a_index = np.empty(len(a_shape), dtype=np.int32)
+
+            j = i + 0
+
+            # индекс элемента результата
+            to_index(j, out_shape, out_index)
+
+            # копируем индекс результата во входной индекс
+            for dim in range(len(a_shape)):
+                a_index[dim] = out_index[dim]
+
+            a_index[reduce_dim] = 0
+
+            out_position = index_to_position(out_index, out_strides)
+
+            # получаем начальную позицию во входном тензоре
+            a_position = index_to_position(a_index, a_strides)
+
+            result = out[out_position]
+
+            # сколько элементов нужно объединить
+            reduce_size = a_shape[reduce_dim]
+
+            # и на сколько позиций двигаться по storage
+            reduce_stride = a_strides[reduce_dim]
+
+            for reduce_i in range(reduce_size):
+                a_value = a_storage[a_position]
+                result = fn(result, a_value)
+                a_position = a_position + reduce_stride
+
+            out[out_position] = result
 
     return njit(parallel=True)(_reduce)  # type: ignore
 
@@ -282,8 +428,29 @@ def _tensor_matrix_multiply(
     a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
 
-    # TODO: Implement for Task 3.2.
-    raise NotImplementedError('Need to implement for Task 3.2')
+    out_rows = out_shape[1]
+    out_columns = out_shape[2]
+
+    # колво умножений для одного элемента out
+    inner_size = a_shape[2]
+
+    for i in prange(len(out)):
+        batch = i // (out_rows * out_columns)
+        row = (i // out_columns) % out_rows
+        column = i % out_columns
+
+        out_position = batch * out_strides[0] + row * out_strides[1] + column * out_strides[2]
+        a_position = batch * a_batch_stride + row * a_strides[1]
+        b_position = batch * b_batch_stride + column * b_strides[2]
+
+        result = 0.0
+
+        for _ in range(inner_size):
+            result = result + a_storage[a_position] * b_storage[b_position]
+            a_position = a_position + a_strides[2]
+            b_position = b_position + b_strides[1]
+
+        out[out_position] = result
 
 
 tensor_matrix_multiply = njit(parallel=True, fastmath=True)(_tensor_matrix_multiply)
